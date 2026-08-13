@@ -1,0 +1,6 @@
+{
+  "name": "EduTN43 · Model vs Model",
+  "description": "EduTN43 MYP Sciences AI-integrated summative diagnostic tool with split-screen student workspace and teacher summary",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
