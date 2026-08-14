@@ -7,6 +7,11 @@ import {
   StrandEvaluation
 } from "../types";
 import {
+  findBuiltinAssignment,
+  generateCurriculumPackageOffline,
+  evaluateSubmissionOffline
+} from "../data/seedAssignments";
+import {
   CurriculumFramework,
   CURRICULUM_FRAMEWORKS,
   CLASS_LEVELS,
@@ -199,41 +204,13 @@ export const StudentConsole: React.FC<StudentConsoleProps> = ({
     setIsLoadingLoadingAssignment(true);
 
     try {
-      const data = await safeFetchJson(`/api/student/assignments/${encodeURIComponent(q)}`, {
-        method: "GET"
-      });
-
-      if (data && data.success && data.assignment) {
-        const assign = data.assignment;
-        setActiveAssignmentId(assign.id);
-        setFramework(assign.framework || "MYP");
-        setClassLevel(assign.classLevel || "MYP3");
-        setSelectedTopic(assign.topic);
-        setMode(assign.mode || "analogy");
-        setSelectedStrands(assign.selectedStrands || DEFAULT_ANALOGY_STRANDS);
-        setContextText(assign.contextText);
-        setElements(assign.elements || []);
-
-        const initIdent: Record<number, string> = {};
-        (assign.elements || []).forEach((e: ScenarioElement) => {
-          initIdent[e.id] = "";
-        });
-        setIdentifications(initIdent);
-        setIsLocked(false);
-        setReport(null);
-        setReflectionText("");
-        setReflectionSaved(false);
-        onPhaseChange(1);
-      } else {
-        throw new Error(data.error || "Assignment not found.");
-      }
-    } catch (err: any) {
-      console.error(err);
-      // Fallback: Check local storage for teacher published task
       try {
-        const stored = localStorage.getItem(`edutn43_assignment_${q.toUpperCase()}`) || localStorage.getItem(`edutn43_assignment_CLASS_${q.toUpperCase()}`);
-        if (stored) {
-          const assign = JSON.parse(stored);
+        const data = await safeFetchJson(`/api/student/assignments/${encodeURIComponent(q)}`, {
+          method: "GET"
+        });
+
+        if (data && data.success && data.assignment) {
+          const assign = data.assignment;
           setActiveAssignmentId(assign.id);
           setFramework(assign.framework || "MYP");
           setClassLevel(assign.classLevel || "MYP3");
@@ -253,13 +230,48 @@ export const StudentConsole: React.FC<StudentConsoleProps> = ({
           setReflectionText("");
           setReflectionSaved(false);
           onPhaseChange(1);
-          setIsLoadingLoadingAssignment(false);
+          return;
+        }
+      } catch (err: any) {
+        console.warn("Server assignment lookup failed, using local/built-in catalog:", err.message);
+      }
+
+      // Comprehensive Fallback: Check local storage or Built-in Curriculum Assignments
+      try {
+        const stored =
+          localStorage.getItem(`edutn43_assignment_${q.toUpperCase()}`) ||
+          localStorage.getItem(`edutn43_assignment_CLASS_${q.toUpperCase()}`);
+
+        const assign = stored ? JSON.parse(stored) : findBuiltinAssignment(q);
+
+        if (assign) {
+          setActiveAssignmentId(assign.id);
+          setFramework(assign.framework || "MYP");
+          setClassLevel(assign.classLevel || "MYP3");
+          setSelectedTopic(assign.topic);
+          setMode(assign.mode || "analogy");
+          setSelectedStrands(assign.selectedStrands || DEFAULT_ANALOGY_STRANDS);
+          setContextText(assign.contextText);
+          setElements(assign.elements || []);
+
+          const initIdent: Record<number, string> = {};
+          (assign.elements || []).forEach((e: ScenarioElement) => {
+            initIdent[e.id] = "";
+          });
+          setIdentifications(initIdent);
+          setIsLocked(false);
+          setReport(null);
+          setReflectionText("");
+          setReflectionSaved(false);
+          setErrorMessage(""); // clear any transient error
+          onPhaseChange(1);
           return;
         }
       } catch (e) {
-        // ignore
+        console.error("Local fallback error:", e);
       }
-      setErrorMessage(err.message || `No common task found for '${q}'. Ask your teacher to publish the task.`);
+
+      setErrorMessage(`No common task found for '${q}'. Ask your teacher to publish the task.`);
     } finally {
       setIsLoadingLoadingAssignment(false);
     }
@@ -305,16 +317,31 @@ export const StudentConsole: React.FC<StudentConsoleProps> = ({
         }),
       });
 
-      setContextText(data.contextText);
-      setElements(data.elements || []);
-      const initIdent: Record<number, string> = {};
-      (data.elements || []).forEach((e: ScenarioElement) => {
-        initIdent[e.id] = "";
-      });
-      setIdentifications(initIdent);
+      if (data && data.contextText && data.elements) {
+        setContextText(data.contextText);
+        setElements(data.elements || []);
+        const initIdent: Record<number, string> = {};
+        (data.elements || []).forEach((e: ScenarioElement) => {
+          initIdent[e.id] = "";
+        });
+        setIdentifications(initIdent);
+        return;
+      }
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || "Failed to generate analogy/scenario. Please try again.");
+      console.warn("Server generation unavailable, activating local curriculum model generator:", err.message);
+      try {
+        const localPackage = generateCurriculumPackageOffline(effectiveTopic, mode, framework, classLevel);
+        setContextText(localPackage.contextText);
+        setElements(localPackage.elements || []);
+        const initIdent: Record<number, string> = {};
+        (localPackage.elements || []).forEach((e: ScenarioElement) => {
+          initIdent[e.id] = "";
+        });
+        setIdentifications(initIdent);
+        return;
+      } catch (fallbackErr: any) {
+        setErrorMessage(err.message || "Failed to generate analogy/scenario. Please try again.");
+      }
     } finally {
       setIsGeneratingPackage(false);
     }
@@ -374,8 +401,14 @@ export const StudentConsole: React.FC<StudentConsoleProps> = ({
       setReport(data);
       onPhaseChange(3);
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || "Correction failed. Please try submitting again.");
+      console.warn("Server evaluation unavailable, utilizing local criteria evaluation engine:", err.message);
+      try {
+        const localReport = evaluateSubmissionOffline(elements, identifications, reflectionText);
+        setReport(localReport);
+        onPhaseChange(3);
+      } catch (evalFallbackErr: any) {
+        setErrorMessage(err.message || "Correction failed. Please try submitting again.");
+      }
     } finally {
       setIsEvaluating(false);
     }
